@@ -2,7 +2,7 @@
 # @Author: Tom Lotze
 # @Date:   2020-03-22 12:45
 # @Last Modified by:   Tom Lotze
-# @Last Modified time: 2020-03-22 15:32
+# @Last Modified time: 2020-03-22 18:17
 
 import cv2
 import numpy as np
@@ -10,74 +10,91 @@ import matplotlib.pyplot as plt
 import time
 import argparse
 from tqdm import tqdm
+import pickle
+
+class FeatureExtractor(object):
+    def __init__(self, config):
+        self.orb = cv2.ORB_create()
+        self.config = config
+        self.W = config.width
+        self.H = config.height
+        self.delta_w = 48
+        self.delta_h = 32
+
+    def extract(self, img):
+        img = cv2.resize(img, (self.W, self.H))
+        gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
+        kps = cv2.goodFeaturesToTrack(gray, 3000, 0.01, 3)
+
+        # convert to cv keypoints
+        kps = [cv2.KeyPoint(kp[0][0], kp[0][1], 1) for kp in kps]
+        des = self.orb.compute(img, kps)
+
+        return kps
+
+
+
+def process_frame(frame, config):
+    FE = FeatureExtractor(config)
+    kps = FE.extract(frame)
+
+    if config.show_video:
+        keypoints_img = cv2.drawKeypoints(frame, kps, frame)
+        cv2.imshow('Keypoints', keypoints_img)
+        key = cv2.waitKey(30)
+        stop = (key == 27)
+
+    return kps, stop
 
 
 def main(video_filename, config):
     cap = cv2.VideoCapture(video_filename)
     assert cap.isOpened(), "Video is not opened properly"
 
-    W, H = int(cap.get(3)/2), int(cap.get(4)/2)
-    if config.verbose: print(f"W:{W}, H:{H}")
     frame_step = 0
     mean_distances = []
 
     prev_frame = None
-    pbar = tqdm(total=20400)
+    pbar = tqdm(total=20401)
 
     while cap.isOpened():
+        if frame_step == config.max_frames:
+            print("Max number of frames has been reached")
+            break
+
         ret, new_frame = cap.read()
         pbar.update(1)
-        if frame_step == 0:
-            prev_frame = new_frame
-            frame_step += 1
-            continue
 
-        if ret:
-            # show video if wanted
-            matches, stop = compare_frames(prev_frame, new_frame, config)
-            if frame_step == config.max_frames:
-                stop = 1
-            if stop: break
+        if ret == True:
+            kps, stop = process_frame(new_frame, config)
+        if ret == False or stop:
+            break
 
-
-            distances = [match.distance for match in matches]
-            mean_dist = np.mean(distances)
-            mean_distances.append(mean_dist)
-            #if config.verbose: print(mean_dist)
-
-
-            # prepare for next frame
-            prev_frame = new_frame
-            frame_step += 1
+        frame_step += 1
 
     # close the video
     pbar.close()
     cap.release()
-
-    plt.figure()
-    plt.plot(list(range(len(mean_distances))), mean_distances)
-    plt.show()
-
     cv2.destroyAllWindows()
 
 
-def compare_frames(frame1, frame2, config):
-    kp1, des1 = config.orb.detectAndCompute(frame1, None)
-    kp2, des2 = config.orb.detectAndCompute(frame2, None)
+# def compare_frames(frame1, frame2, config):
+#     kp1, des1 = config.orb.detectAndCompute(frame1, None)
+#     kp2, des2 = config.orb.detectAndCompute(frame2, None)
 
-    # matcher takes normType, which is set to cv2.NORM_L2 for SIFT and SURF, cv2.NORM_HAMMING for ORB, FAST and BRIEF
-    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-    matches = bf.match(des1, des2)
-    matches = sorted(matches, key=lambda x: x.distance)# draw first 50 matches
-    if config.show_video:
-        match_img = cv2.drawMatches(frame1, kp1, frame2, kp2, matches[:10], None)
-        cv2.imshow('Matches', match_img)
-        key = cv2.waitKey(30)
-        if key == 27:
-            if config.verbose: print("ESC was pressed")
-            return matches, 1
+#     # matcher takes normType, which is set to cv2.NORM_L2 for SIFT and SURF, cv2.NORM_HAMMING for ORB, FAST and BRIEF
+#     bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+#     matches = bf.match(des1, des2)
+#     matches = sorted(matches, key=lambda x: x.distance)
+#     if config.show_video:
+#         match_img = cv2.drawMatches(frame1, kp1, frame2, kp2, matches[:10], None)
+#         cv2.imshow('Matches', match_img)
+#         key = cv2.waitKey(30)
+#         if key == 27:
+#             if config.verbose: print("ESC was pressed")
+#             return matches, 1
 
-    return matches, 0
+#     return matches, 0
 
 
 
@@ -89,7 +106,9 @@ if __name__ == "__main__":
     parser.add_argument('--verbose', type=int, default=1, help='Boolean (0, 1) whether to print variables')
     parser.add_argument('--max_frames', type=int, default=-1, help="max number of frames to analyse, set to -1 to complete whole video")
     parser.add_argument('--show_video', type=int, default=1, help="Boolean (0, 1) whether to show the video")
-    parser.add_argument('--num_features', type=int, default=500, help="number of features used to match frames.")
+    parser.add_argument('--num_features', type=int, default=10, help="number of features used to match frames.")
+    parser.add_argument('--width', type=int, default=640, help="width of frames")
+    parser.add_argument('--height', type=int, default=480, help="height of frames")
 
     config, _ = parser.parse_known_args()
     config.verbose = bool(config.verbose)
