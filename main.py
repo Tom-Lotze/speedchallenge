@@ -2,7 +2,7 @@
 # @Author: Tom Lotze
 # @Date:   2020-03-22 12:45
 # @Last Modified by:   Tom Lotze
-# @Last Modified time: 2020-03-22 18:17
+# @Last Modified time: 2020-03-22 20:25
 
 import cv2
 import numpy as np
@@ -15,36 +15,44 @@ import pickle
 class FeatureExtractor(object):
     def __init__(self, config):
         self.orb = cv2.ORB_create()
+        self.bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
         self.config = config
         self.W = config.width
         self.H = config.height
         self.delta_w = 48
         self.delta_h = 32
+        self.previous = None
 
     def extract(self, img):
+        # keypoints
         img = cv2.resize(img, (self.W, self.H))
         gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
         kps = cv2.goodFeaturesToTrack(gray, 3000, 0.01, 3)
 
         # convert to cv keypoints
         kps = [cv2.KeyPoint(kp[0][0], kp[0][1], 1) for kp in kps]
-        des = self.orb.compute(img, kps)
+        _, des = self.orb.compute(img, kps)
 
-        return kps
+        # find matches
+        matches = None
+        if self.previous != None:
+            matches = self.bf.match(self.previous["des"], des)
+        self.previous = {"kps": kps, "des": des}
+
+        return kps, des, matches
 
 
 
 def process_frame(frame, config):
-    FE = FeatureExtractor(config)
-    kps = FE.extract(frame)
+    kps, des, matches = FE.extract(frame)
 
     if config.show_video:
-        keypoints_img = cv2.drawKeypoints(frame, kps, frame)
+        keypoints_img = cv2.drawKeypoints(frame, kps, frame, color=[0, 255, 255])
         cv2.imshow('Keypoints', keypoints_img)
         key = cv2.waitKey(30)
         stop = (key == 27)
 
-    return kps, stop
+    return kps, des, stop
 
 
 def main(video_filename, config):
@@ -66,7 +74,7 @@ def main(video_filename, config):
         pbar.update(1)
 
         if ret == True:
-            kps, stop = process_frame(new_frame, config)
+            kps, des, stop = process_frame(new_frame, config)
         if ret == False or stop:
             break
 
@@ -114,6 +122,6 @@ if __name__ == "__main__":
     config.verbose = bool(config.verbose)
     config.show_video = bool(config.show_video)
 
-    config.orb = cv2.ORB_create(nfeatures=config.num_features)
+    FE = FeatureExtractor(config)
 
     main(config.train_filename, config)
