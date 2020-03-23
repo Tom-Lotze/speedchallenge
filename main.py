@@ -2,7 +2,7 @@
 # @Author: Tom Lotze
 # @Date:   2020-03-22 12:45
 # @Last Modified by:   Tom Lotze
-# @Last Modified time: 2020-03-23 13:36
+# @Last Modified time: 2020-03-23 14:45
 
 import cv2
 import numpy as np
@@ -11,69 +11,30 @@ import time
 import argparse
 from tqdm import tqdm
 import pickle
+import feature_extractor
 
-
-
-class FeatureExtractor(object):
-    def __init__(self, config):
-        self.orb = cv2.ORB_create()
-        # set crosscheck to true if not using knnMatch
-        self.bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-        self.config = config
-        self.W = config.width
-        self.H = config.height
-        self.delta_w = 48
-        self.delta_h = 32
-        self.previous = None
-
-    def extract(self, img):
-        # keypoints
-        gray = cv2.cvtColor(img ,cv2.COLOR_BGR2GRAY)
-        kps = cv2.goodFeaturesToTrack(gray, 5000, 0.05, 3)
-
-        # convert to cv keypoints
-        kps = [cv2.KeyPoint(kp[0][0], kp[0][1], 1) for kp in kps]
-
-        kps, des = self.orb.compute(img, kps)
-
-
-
-
-        # find matches
-        matches = None
-        if self.previous != None:
-            matches = self.bf.match(self.previous["des"], des)
-            matches = sorted(matches, key=lambda x: x.distance)[:config.nr_matches]
-
-            # plot matches
-            if config.show_matches:
-                img_matches = cv2.drawMatches(self.previous["frame"], self.previous["kps"], img, kps, matches, None)
-                cv2.imshow("Matches", img_matches)
-                key = cv2.waitKey(0)
-                stop = (key == 27)
-
-        self.previous = {"frame": img, "kps": kps, "des": des}
-
-        return kps, des, matches
 
 
 def process_frame(frame, config):
     frame = cv2.resize(frame, (FE.W, FE.H))
-    kps, des, matches = FE.extract(frame)
+    kps, des, matches, stop = FE.extract(frame)
 
-    stop = False
-
+    # exception for first frame
     if not matches:
-        print("No matches found")
-        print(FE.previous)
+        FE.previous = {"frame": frame, "kps": kps, "des": des}
+        return kps, des, False
 
-    elif config.show_keypoints:
-        # show keypoints
+    # retrieve the coordinates of matching keypoints
+    prev_coord, curr_coord = FE.get_coordinates(matches, kps)
+    #breakpoint()
+
+    # show keypoint
+    if config.show_keypoints:
         keypoints_img = cv2.drawKeypoints(frame, kps, frame, color=[0, 255, 0])
         cv2.imshow('Keypoints', keypoints_img)
-        key = cv2.waitKey(30)
-        stop = (key == 27)
+        stop = (cv2.waitKey(FE.wait) == 27)
 
+    FE.previous = {"frame": frame, "kps": kps, "des": des}
 
     return kps, des, stop
 
@@ -83,20 +44,22 @@ def main(video_filename, config):
     cap = cv2.VideoCapture(video_filename)
     assert cap.isOpened(), "Video is not opened properly"
 
-    frame_step = 0
-    mean_distances = []
+    # get number of frames in the video
+    if config.max_frames == -1:
+        config.max_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))+1
 
-    prev_frame = None
-    pbar = tqdm(total=20401)
+    frame_step = 0
+    pbar = tqdm(total=config.max_frames)
 
     while cap.isOpened():
         if frame_step == config.max_frames:
-            print("Max number of frames has been reached")
             break
 
+        # read next frame
         ret, new_frame = cap.read()
         pbar.update(1)
 
+        # process the frame
         if ret == True:
             kps, des, stop = process_frame(new_frame, config)
         if ret == False or stop:
@@ -115,7 +78,7 @@ if __name__ == "__main__":
     parser.add_argument('--fps', type=int, default = 20, help= "frames per second")
     parser.add_argument('--train_filename', type=str, default="./data/train.mp4", help="path to training video filename")
     parser.add_argument('--verbose', type=int, default=1, help='Boolean (0, 1) whether to print variables')
-    parser.add_argument('--max_frames', type=int, default=-1, help="max number of frames to analyse, set to -1 to complete whole video")
+    parser.add_argument('--max_frames', type=int, default=100, help="max number of frames to analyse, set to -1 to complete whole video")
     parser.add_argument('--show_keypoints', type=int, default=0, help="Boolean (0, 1) whether to show the video")
     parser.add_argument('--show_matches', type=int, default=1, help="Boolean (0, 1) whether to show the matches between frames")
     parser.add_argument('--num_features', type=int, default=10, help="number of features used to match frames.")
@@ -128,6 +91,6 @@ if __name__ == "__main__":
     config.show_keypoints = bool(config.show_keypoints)
     config.show_matches = bool(config.show_matches)
 
-    FE = FeatureExtractor(config)
+    FE = feature_extractor.FeatureExtractor(config)
 
     main(config.train_filename, config)
